@@ -32,15 +32,18 @@ st.title("📝 Daily Intent & Reflection Journal")
 data = load_data()
 today = str(date.today())
 
-# Default structure per day
+# ----------------------------
+# Default Day Structure (Backward Safe)
+# ----------------------------
 if today not in data:
-    data[today] = {
-        "intentions": ["", "", ""],
-        "morning_mood": "😐",
-        "reflection": "",
-        "top_win": "",
-        "evening_mood": ""
-    }
+    data[today] = {}
+
+data[today].setdefault("intentions", ["", "", ""])
+data[today].setdefault("morning_mood", "😐")
+data[today].setdefault("reflection", "")
+data[today].setdefault("top_win", "")
+data[today].setdefault("evening_mood", "")
+data[today].setdefault("evening_completed", False)
 
 entry = data[today]
 
@@ -92,37 +95,61 @@ evening_mood = st.radio(
 )
 
 if st.button("💾 Save Evening Reflection"):
-    data[today]["reflection"] = reflection
-    data[today]["top_win"] = top_win
+    data[today]["reflection"] = reflection.strip()
+    data[today]["top_win"] = top_win.strip()
     data[today]["evening_mood"] = evening_mood
+    data[today]["evening_completed"] = True
     save_data(data)
     st.success("Evening reflection saved")
 
 # ----------------------------
-# Weekly Summary (Only Completed Days)
+# Weekly Summary (Completed Days Only)
 # ----------------------------
-st.header("📊 Weekly Summary (Completed Days Only)")
+st.header("📊 Weekly Mood Trend (Completed Days)")
 
-completed_rows = []
+rows = []
 
 for d, v in data.items():
-    if v["evening_mood"] and v["reflection"]:
-        completed_rows.append({
+    if v.get("evening_completed"):
+        rows.append({
             "date": d,
-            "morning": mood_to_score(v["morning_mood"]),
-            "evening": mood_to_score(v["evening_mood"])
+            "Morning Mood": mood_to_score(v.get("morning_mood")),
+            "Evening Mood": mood_to_score(v.get("evening_mood"))
         })
 
-if completed_rows:
-    df = pd.DataFrame(completed_rows)
+if rows:
+    df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").tail(7)
 
-    fig, ax = plt.subplots()
-    ax.plot(df["date"], df["morning"], label="Morning Mood")
-    ax.plot(df["date"], df["evening"], label="Evening Mood")
-    ax.set_ylim(0, 6)
+    fig, ax = plt.subplots(figsize=(7, 4))
+
+    ax.plot(
+        df["date"],
+        df["Morning Mood"],
+        marker="o",
+        linewidth=2,
+        label="Morning"
+    )
+
+    ax.plot(
+        df["date"],
+        df["Evening Mood"],
+        marker="o",
+        linewidth=2,
+        label="Evening"
+    )
+
+    ax.set_ylim(0.5, 5.5)
+    ax.set_yticks([1, 3, 5])
+    ax.set_yticklabels(["Low", "Neutral", "Good"])
+
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Mood Level")
+    ax.set_title("Mood Change Across the Day")
     ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.4)
+
     st.pyplot(fig)
 else:
-    st.info("Weekly summary will appear once evening reflections are saved.")
+    st.info("Complete at least one evening reflection to see trends.")
