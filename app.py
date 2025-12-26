@@ -1,55 +1,109 @@
 import streamlit as st
 import pandas as pd
-import json
-from datetime import date
+from datetime import date, timedelta
+from supabase import create_client
 import matplotlib.pyplot as plt
 
-DATA_FILE = "journal_data.json"
+# ----------------------------
+# Config
+# ----------------------------
+st.set_page_config(
+    page_title="Daily Intent Journal",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 1rem; }
+    button { width: 100%; height: 3rem; }
+    textarea, input { font-size: 1rem !important; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ----------------------------
-# Utility Functions
+# Supabase Client
 # ----------------------------
-def load_data():
-    try:
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+TODAY = date.today()
 
+# ----------------------------
+# Helpers
+# ----------------------------
 def mood_to_score(mood):
     return {"😞": 1, "😐": 3, "😊": 5}.get(mood, 3)
 
-# ----------------------------
-# App Config
-# ----------------------------
-st.set_page_config(page_title="Daily Intent & Reflection", layout="centered")
-st.title("📝 Daily Intent & Reflection Journal")
+def get_entry(d):
+    res = (
+        supabase.table("journal_entries")
+        .select("*")
+        .eq("entry_date", str(d))
+        .execute()
+    )
+    if res.data:
+        return res.data[0]
 
-data = load_data()
-today = str(date.today())
+    return {
+        "entry_date": str(d),
+        "intentions": ["", "", ""],
+        "morning_mood": "😐",
+        "reflection": "",
+        "top_win": "",
+        "evening_mood": "",
+        "evening_completed": False
+    }
+
+def upsert_entry(entry):
+    supabase.table("journal_entries").upsert(entry).execute()
 
 # ----------------------------
-# Default Day Structure (Backward Safe)
+# Load Today
 # ----------------------------
-if today not in data:
-    data[today] = {}
+entry = get_entry(TODAY)
 
-data[today].setdefault("intentions", ["", "", ""])
-data[today].setdefault("morning_mood", "😐")
-data[today].setdefault("reflection", "")
-data[today].setdefault("top_win", "")
-data[today].setdefault("evening_mood", "")
-data[today].setdefault("evening_completed", False)
-
-entry = data[today]
+st.title("📝 Daily Intent Journal")
 
 # ----------------------------
-# Morning Section
+# Streak & Consistency
 # ----------------------------
+st.subheader("🔥 Consistency")
+
+res = supabase.table("journal_entries").select("entry_date").eq("evening_completed", True).execute()
+completed_dates = sorted([date.fromisoformat(r["entry_date"]) for r in res.data])
+
+current_streak = 0
+longest_streak = 0
+temp_streak = 0
+prev = None
+
+for d in completed_dates:
+    if prev and d == prev + timedelta(days=1):
+        temp_streak += 1
+    else:
+        temp_streak = 1
+    longest_streak = max(longest_streak, temp_streak)
+    prev = d
+
+if completed_dates and completed_dates[-1] == TODAY:
+    current_streak = temp_streak
+
+last_7 = [TODAY - timedelta(days=i) for i in range(7)]
+consistency_7 = sum(1 for d in completed_dates if d in last_7)
+
+st.metric("Current Streak", f"{current_streak} 🔥")
+st.metric("Best Streak", f"{longest_streak} ⭐")
+st.metric("Last 7 Days", f"{consistency_7}/7 ✅")
+
+# ----------------------------
+# Morning
+# ----------------------------
+st.divider()
 st.header("🌅 Morning Intentions")
 
 intentions = []
@@ -65,24 +119,26 @@ morning_mood = st.radio(
     index=["😞", "😐", "😊"].index(entry["morning_mood"])
 )
 
-if st.button("💾 Save Morning Intentions"):
-    data[today]["intentions"] = intentions
-    data[today]["morning_mood"] = morning_mood
-    save_data(data)
-    st.success("Morning intentions saved")
+if st.button("Save Morning"):
+    entry["intentions"] = intentions
+    entry["morning_mood"] = morning_mood
+    upsert_entry(entry)
+    st.success("Morning saved")
 
 # ----------------------------
-# Evening Section
+# Evening
 # ----------------------------
+st.divider()
 st.header("🌙 Evening Reflection")
 
 reflection = st.text_area(
-    "What worked / didn’t work today?",
-    entry["reflection"]
+    "What worked / didn’t?",
+    entry["reflection"],
+    height=120
 )
 
 top_win = st.text_input(
-    "🏆 Top 1 Win of the Day",
+    "🏆 Top 1 Win",
     entry["top_win"]
 )
 
@@ -94,62 +150,44 @@ evening_mood = st.radio(
     if entry["evening_mood"] else 1
 )
 
-if st.button("💾 Save Evening Reflection"):
-    data[today]["reflection"] = reflection.strip()
-    data[today]["top_win"] = top_win.strip()
-    data[today]["evening_mood"] = evening_mood
-    data[today]["evening_completed"] = True
-    save_data(data)
-    st.success("Evening reflection saved")
+if st.button("Save Evening"):
+    entry["reflection"] = reflection.strip()
+    entry["top_win"] = top_win.strip()
+    entry["evening_mood"] = evening_mood
+    entry["evening_completed"] = True
+    upsert_entry(entry)
+    st.success("Evening saved")
 
 # ----------------------------
-# Weekly Summary (Completed Days Only)
+# Weekly Mood Trend
 # ----------------------------
-st.header("📊 Weekly Mood Trend (Completed Days)")
+st.divider()
+st.header("📊 Weekly Mood Trend")
 
-rows = []
+res = (
+    supabase.table("journal_entries")
+    .select("*")
+    .eq("evening_completed", True)
+    .execute()
+)
 
-for d, v in data.items():
-    if v.get("evening_completed"):
-        rows.append({
-            "date": d,
-            "Morning Mood": mood_to_score(v.get("morning_mood")),
-            "Evening Mood": mood_to_score(v.get("evening_mood"))
-        })
+if res.data:
+    df = pd.DataFrame(res.data)
+    df["entry_date"] = pd.to_datetime(df["entry_date"])
+    df = df.sort_values("entry_date").tail(7)
 
-if rows:
-    df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").tail(7)
+    df["Morning"] = df["morning_mood"].apply(mood_to_score)
+    df["Evening"] = df["evening_mood"].apply(mood_to_score)
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-
-    ax.plot(
-        df["date"],
-        df["Morning Mood"],
-        marker="o",
-        linewidth=2,
-        label="Morning"
-    )
-
-    ax.plot(
-        df["date"],
-        df["Evening Mood"],
-        marker="o",
-        linewidth=2,
-        label="Evening"
-    )
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    ax.plot(df["entry_date"], df["Morning"], marker="o", label="Morning")
+    ax.plot(df["entry_date"], df["Evening"], marker="o", label="Evening")
 
     ax.set_ylim(0.5, 5.5)
     ax.set_yticks([1, 3, 5])
     ax.set_yticklabels(["Low", "Neutral", "Good"])
-
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Mood Level")
-    ax.set_title("Mood Change Across the Day")
-    ax.legend()
     ax.grid(True, linestyle="--", alpha=0.4)
-
+    ax.legend()
     st.pyplot(fig)
 else:
     st.info("Complete at least one evening reflection to see trends.")
