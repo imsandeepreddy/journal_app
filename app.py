@@ -1,4 +1,31 @@
 import streamlit as st
+
+# =========================
+# 🔐 PIN Authentication
+# =========================
+APP_PIN = st.secrets["APP_PIN"]
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 Enter PIN")
+
+    pin_input = st.text_input(
+        "4-digit PIN",
+        type="password",
+        max_chars=4
+    )
+
+    if st.button("Unlock", use_container_width=True):
+        if pin_input == APP_PIN:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect PIN")
+
+    st.stop()
+    
 import pandas as pd
 from datetime import date, timedelta
 from supabase import create_client
