@@ -3,7 +3,6 @@ import pandas as pd
 import json
 from datetime import date
 import matplotlib.pyplot as plt
-from fpdf import FPDF
 
 DATA_FILE = "journal_data.json"
 
@@ -33,13 +32,17 @@ st.title("📝 Daily Intent & Reflection Journal")
 data = load_data()
 today = str(date.today())
 
-entry = data.get(today, {
-    "intentions": ["", "", ""],
-    "morning_mood": "😐",
-    "reflection": "",
-    "top_win": "",
-    "evening_mood": "😐"
-})
+# Default structure per day
+if today not in data:
+    data[today] = {
+        "intentions": ["", "", ""],
+        "morning_mood": "😐",
+        "reflection": "",
+        "top_win": "",
+        "evening_mood": ""
+    }
+
+entry = data[today]
 
 # ----------------------------
 # Morning Section
@@ -59,50 +62,59 @@ morning_mood = st.radio(
     index=["😞", "😐", "😊"].index(entry["morning_mood"])
 )
 
+if st.button("💾 Save Morning Intentions"):
+    data[today]["intentions"] = intentions
+    data[today]["morning_mood"] = morning_mood
+    save_data(data)
+    st.success("Morning intentions saved")
+
 # ----------------------------
 # Evening Section
 # ----------------------------
 st.header("🌙 Evening Reflection")
 
-reflection = st.text_area("What worked / didn’t work today?", entry["reflection"])
-top_win = st.text_input("🏆 Top 1 Win of the Day", entry["top_win"])
+reflection = st.text_area(
+    "What worked / didn’t work today?",
+    entry["reflection"]
+)
+
+top_win = st.text_input(
+    "🏆 Top 1 Win of the Day",
+    entry["top_win"]
+)
 
 evening_mood = st.radio(
     "Evening Mood",
     ["😞", "😐", "😊"],
     horizontal=True,
     index=["😞", "😐", "😊"].index(entry["evening_mood"])
+    if entry["evening_mood"] else 1
 )
 
-# ----------------------------
-# Save Entry
-# ----------------------------
-if st.button("💾 Save Journal Entry"):
-    data[today] = {
-        "intentions": intentions,
-        "morning_mood": morning_mood,
-        "reflection": reflection,
-        "top_win": top_win,
-        "evening_mood": evening_mood
-    }
+if st.button("💾 Save Evening Reflection"):
+    data[today]["reflection"] = reflection
+    data[today]["top_win"] = top_win
+    data[today]["evening_mood"] = evening_mood
     save_data(data)
-    st.success("Entry saved")
+    st.success("Evening reflection saved")
 
 # ----------------------------
-# Weekly Summary
+# Weekly Summary (Only Completed Days)
 # ----------------------------
-st.header("📊 Weekly Summary")
+st.header("📊 Weekly Summary (Completed Days Only)")
 
-if data:
-    df = []
-    for d, v in data.items():
-        df.append({
+completed_rows = []
+
+for d, v in data.items():
+    if v["evening_mood"] and v["reflection"]:
+        completed_rows.append({
             "date": d,
             "morning": mood_to_score(v["morning_mood"]),
             "evening": mood_to_score(v["evening_mood"])
         })
 
-    df = pd.DataFrame(df)
+if completed_rows:
+    df = pd.DataFrame(completed_rows)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").tail(7)
 
@@ -112,47 +124,5 @@ if data:
     ax.set_ylim(0, 6)
     ax.legend()
     st.pyplot(fig)
-
-# ----------------------------
-# Export Section
-# ----------------------------
-st.header("📤 Export")
-
-def export_markdown():
-    md = "# Daily Journal\n\n"
-    for d, v in data.items():
-        md += f"## {d}\n"
-        md += f"- Intentions: {', '.join(v['intentions'])}\n"
-        md += f"- Top Win: {v['top_win']}\n"
-        md += f"- Reflection: {v['reflection']}\n"
-        md += f"- Mood: {v['morning_mood']} → {v['evening_mood']}\n\n"
-    return md
-
-def export_pdf():
-    pdf = FPDF()
-    pdf.set_auto_page_break(True, 15)
-    pdf.add_page()
-    pdf.set_font("Arial", size=10)
-
-    for d, v in data.items():
-        pdf.multi_cell(0, 8, f"{d}\nIntentions: {', '.join(v['intentions'])}\n"
-                            f"Top Win: {v['top_win']}\n"
-                            f"Reflection: {v['reflection']}\n"
-                            f"Mood: {v['morning_mood']} → {v['evening_mood']}\n\n")
-    path = "/tmp/journal.pdf"
-    pdf.output(path)
-    return path
-
-st.download_button(
-    "⬇️ Export Markdown",
-    export_markdown(),
-    file_name="journal.md"
-)
-
-pdf_path = export_pdf()
-with open(pdf_path, "rb") as f:
-    st.download_button(
-        "⬇️ Export PDF",
-        f,
-        file_name="journal.pdf"
-    )
+else:
+    st.info("Weekly summary will appear once evening reflections are saved.")
