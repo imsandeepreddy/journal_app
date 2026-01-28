@@ -25,196 +25,139 @@ if not st.session_state.authenticated:
             st.error("Incorrect PIN")
 
     st.stop()
-    
-import pandas as pd
-from datetime import date, timedelta
+
 from supabase import create_client
-import matplotlib.pyplot as plt
+from datetime import date
+import os
 
-# ----------------------------
-# Config
-# ----------------------------
-st.set_page_config(
-    page_title="Daily Intent Journal",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
-st.markdown(
-    """
-    <style>
-    .block-container { padding-top: 1rem; }
-    button { width: 100%; height: 3rem; }
-    textarea, input { font-size: 1rem !important; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# ----------------------------
-# Supabase Client
-# ----------------------------
+# -----------------------
+# CONFIG
+# -----------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-TODAY = date.today()
+st.set_page_config(page_title="Life Memory Console", layout="wide")
 
-# ----------------------------
-# Helpers
-# ----------------------------
-def mood_to_score(mood):
-    return {"😞": 1, "😐": 3, "😊": 5}.get(mood, 3)
+# -----------------------
+# UI
+# -----------------------
+st.title("Life Memory Console")
 
-def get_entry(d):
-    res = (
-        supabase.table("journal_entries")
-        .select("*")
-        .eq("entry_date", str(d))
-        .execute()
-    )
-    if res.data:
-        return res.data[0]
+tab1, tab2, tab3 = st.tabs(["➕ Journal", "🧠 Decisions", "📖 View Data"])
 
-    return {
-        "entry_date": str(d),
-        "intentions": ["", "", ""],
-        "morning_mood": "😐",
-        "reflection": "",
-        "top_win": "",
-        "evening_mood": "",
-        "evening_completed": False
-    }
+# -----------------------
+# JOURNAL ENTRY
+# -----------------------
+with tab1:
+    st.subheader("Add Journal Entry")
 
-def upsert_entry(entry):
-    supabase.table("journal_entries").upsert(entry).execute()
+    entry_date = st.date_input("Date", value=date.today())
 
-# ----------------------------
-# Load Today
-# ----------------------------
-entry = get_entry(TODAY)
-
-st.title("📝 Daily Intent Journal")
-
-# ----------------------------
-# Streak & Consistency
-# ----------------------------
-st.subheader("🔥 Consistency")
-
-res = supabase.table("journal_entries").select("entry_date").eq("evening_completed", True).execute()
-completed_dates = sorted([date.fromisoformat(r["entry_date"]) for r in res.data])
-
-current_streak = 0
-longest_streak = 0
-temp_streak = 0
-prev = None
-
-for d in completed_dates:
-    if prev and d == prev + timedelta(days=1):
-        temp_streak += 1
-    else:
-        temp_streak = 1
-    longest_streak = max(longest_streak, temp_streak)
-    prev = d
-
-if completed_dates and completed_dates[-1] == TODAY:
-    current_streak = temp_streak
-
-last_7 = [TODAY - timedelta(days=i) for i in range(7)]
-consistency_7 = sum(1 for d in completed_dates if d in last_7)
-
-st.metric("Current Streak", f"{current_streak} 🔥")
-st.metric("Best Streak", f"{longest_streak} ⭐")
-st.metric("Last 7 Days", f"{consistency_7}/7 ✅")
-
-# ----------------------------
-# Morning
-# ----------------------------
-st.divider()
-st.header("🌅 Morning Intentions")
-
-intentions = []
-for i in range(3):
-    intentions.append(
-        st.text_input(f"Intention {i+1}", entry["intentions"][i])
+    entry_type = st.selectbox(
+        "Type",
+        ["journal", "learning", "decision", "reflection", "project"]
     )
 
-morning_mood = st.radio(
-    "Morning Mood",
-    ["😞", "😐", "😊"],
-    horizontal=True,
-    index=["😞", "😐", "😊"].index(entry["morning_mood"])
-)
+    text = st.text_area("Entry", height=200)
 
-if st.button("Save Morning"):
-    entry["intentions"] = intentions
-    entry["morning_mood"] = morning_mood
-    upsert_entry(entry)
-    st.success("Morning saved")
+    tags_raw = st.text_input("Tags (comma separated)")
 
-# ----------------------------
-# Evening
-# ----------------------------
-st.divider()
-st.header("🌙 Evening Reflection")
+    if st.button("Save Journal Entry"):
+        if not text.strip():
+            st.error("Entry text cannot be empty")
+        else:
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-reflection = st.text_area(
-    "What worked / didn’t?",
-    entry["reflection"],
-    height=120
-)
+            supabase.table("journal_entries").insert({
+                "entry_date": str(entry_date),
+                "text": text,
+                "type": entry_type,
+                "tags": tags
+            }).execute()
 
-top_win = st.text_input(
-    "🏆 Top 1 Win",
-    entry["top_win"]
-)
+            st.success("Journal entry saved")
+            st.rerun()
 
-evening_mood = st.radio(
-    "Evening Mood",
-    ["😞", "😐", "😊"],
-    horizontal=True,
-    index=["😞", "😐", "😊"].index(entry["evening_mood"])
-    if entry["evening_mood"] else 1
-)
+# -----------------------
+# DECISIONS
+# -----------------------
+with tab2:
+    st.subheader("Add Decision")
 
-if st.button("Save Evening"):
-    entry["reflection"] = reflection.strip()
-    entry["top_win"] = top_win.strip()
-    entry["evening_mood"] = evening_mood
-    entry["evening_completed"] = True
-    upsert_entry(entry)
-    st.success("Evening saved")
+    decision_date = st.date_input("Decision date", value=date.today(), key="dd")
 
-# ----------------------------
-# Weekly Mood Trend
-# ----------------------------
-st.divider()
-st.header("📊 Weekly Mood Trend")
+    title = st.text_input("Title")
 
-res = (
-    supabase.table("journal_entries")
-    .select("*")
-    .eq("evening_completed", True)
-    .execute()
-)
+    context = st.text_area("Context", height=120)
+    choice = st.text_area("Choice made", height=80)
+    reasoning = st.text_area("Reasoning", height=120)
+    outcome = st.text_area("Outcome / Result", height=80)
 
-if res.data:
-    df = pd.DataFrame(res.data)
-    df["entry_date"] = pd.to_datetime(df["entry_date"])
-    df = df.sort_values("entry_date").tail(7)
+    d_tags_raw = st.text_input("Tags (comma separated)", key="dtags")
 
-    df["Morning"] = df["morning_mood"].apply(mood_to_score)
-    df["Evening"] = df["evening_mood"].apply(mood_to_score)
+    if st.button("Save Decision"):
+        tags = [t.strip() for t in d_tags_raw.split(",") if t.strip()]
 
-    fig, ax = plt.subplots(figsize=(6, 3.5))
-    ax.plot(df["entry_date"], df["Morning"], marker="o", label="Morning")
-    ax.plot(df["entry_date"], df["Evening"], marker="o", label="Evening")
+        supabase.table("decisions").insert({
+            "decision_date": str(decision_date),
+            "title": title,
+            "context": context,
+            "choice": choice,
+            "reasoning": reasoning,
+            "outcome": outcome,
+            "tags": tags
+        }).execute()
 
-    ax.set_ylim(0.5, 5.5)
-    ax.set_yticks([1, 3, 5])
-    ax.set_yticklabels(["Low", "Neutral", "Good"])
-    ax.grid(True, linestyle="--", alpha=0.4)
-    ax.legend()
-    st.pyplot(fig)
-else:
-    st.info("Complete at least one evening reflection to see trends.")
+        st.success("Decision saved")
+        st.rerun()
+
+# -----------------------
+# VIEW DATA
+# -----------------------
+with tab3:
+    st.subheader("Browse Memory")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### Journal Entries")
+
+        j_limit = st.slider("How many journal entries?", 5, 100, 20)
+
+        journal = supabase.table("journal_entries") \
+            .select("*") \
+            .order("entry_date", desc=True) \
+            .limit(j_limit) \
+            .execute()
+
+        for j in journal.data:
+            with st.expander(f"{j['entry_date']} | {j['type']}"):
+                st.write(j["text"])
+                if j["tags"]:
+                    st.caption("Tags: " + ", ".join(j["tags"]))
+
+    with col2:
+        st.markdown("### Decisions")
+
+        d_limit = st.slider("How many decisions?", 5, 100, 20)
+
+        decisions = supabase.table("decisions") \
+            .select("*") \
+            .order("decision_date", desc=True) \
+            .limit(d_limit) \
+            .execute()
+
+        for d in decisions.data:
+            with st.expander(f"{d['decision_date']} | {d.get('title','')}"):
+                st.markdown("**Context**")
+                st.write(d["context"])
+                st.markdown("**Choice**")
+                st.write(d["choice"])
+                st.markdown("**Reasoning**")
+                st.write(d["reasoning"])
+                st.markdown("**Outcome**")
+                st.write(d["outcome"])
+                if d["tags"]:
+                    st.caption("Tags: " + ", ".join(d["tags"]))
